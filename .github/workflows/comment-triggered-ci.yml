@@ -52,7 +52,6 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const core = require('@actions/core');
             const prNumber = context.issue.number;
             
             // Fetch PR details using the API
