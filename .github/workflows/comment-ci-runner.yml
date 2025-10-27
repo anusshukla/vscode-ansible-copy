@@ -1,123 +1,146 @@
 ---
-name: comment-triggered-ci
+name: comment-ci-runner
 
 on:
-  issue_comment:
-    types: [created, edited]
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Task to run'
+        required: true
+        type: string
+      pr_number:
+        description: 'PR number'
+        required: false
+        type: string
+      pr_repo:
+        description: 'PR repository'
+        required: false
+        type: string
+      pr_ref:
+        description: 'PR ref'
+        required: false
+        type: string
+      pr_sha:
+        description: 'PR SHA'
+        required: false
+        type: string
+
+env:
+  FORCE_COLOR: "1"
+  MISE_ENV: ci
+  PRETTIER_LEGACY_CLI: "1"
+  WSLENV: HOSTNAME:CI:FORCE_COLOR:GITHUB_ACTION:GITHUB_ACTION_PATH/p:GITHUB_ACTION_REPOSITORY:GITHUB_WORKFLOW:GITHUB_WORKSPACE/p:GITHUB_PATH/p:GITHUB_ENV/p:VIRTUAL_ENV/p:SKIP_PODMAN:SKIP_DOCKER:NODE_OPTIONS:MISE_ENV
+  HOSTNAME: gha
 
 jobs:
-  parse-comment:
-    if: |
-      github.event.comment.body != '' &&
-      startsWith(github.event.comment.body, '@ci run') &&
-      (github.event.comment.author_association == 'MEMBER' ||
-       github.event.comment.author_association == 'OWNER' ||
-       github.event.comment.author_association == 'COLLABORATOR')
-    runs-on: ubuntu-latest
+  build:
+    name: ${{ inputs.task }}
+    environment: ci
+    env:
+      SKIP_DOCKER: ${{ (inputs.task == 'lint' || inputs.task == 'unit' || inputs.task == 'ui' || inputs.task == 'e2e' || inputs.task == 'als' || inputs.task == 'docs') && 1 || 0 }}
+      SKIP_PODMAN: ${{ (inputs.task == 'lint' || inputs.task == 'unit' || inputs.task == 'ui' || inputs.task == 'e2e' || inputs.task == 'als' || inputs.task == 'docs') && 1 || 0 }}
+      NODE_OPTIONS: --max-old-space-size=8192
+      TASKFILE_ARGS: --output=group --output-group-begin='::group::{{.TASK}}' --output-group-end='::endgroup::'
+    
+    defaults:
+      run:
+        shell: bash
+    
+    runs-on: ubuntu-24.04
+    
     permissions:
       contents: read
-      pull-requests: write
-      checks: write
+      id-token: write
+      checks: read
+    
     steps:
-      - name: Parse comment
-        id: parse
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          show-progress: false
+
+      - name: Install dependencies with mise
+        timeout-minutes: 15
+        uses: jdx/mise-action@3460d6e58b5c6f0277b8a5184fd0f1f0ef14b5b0 # v2024.9.0
+        
+      - name: task setup
+        timeout-minutes: 25
+        run: task setup
+        id: setup
+
+      - name: task package
+        id: package
         run: |
-          comment="${{ github.event.comment.body }}"
-          echo "Comment: $comment"
+          task package ${{ env.TASKFILE_ARGS }}
 
-          # Extract task from comment
-          # Expected format: @ci run <task>
-          task=$(echo "$comment" | sed -n 's/.*@ci run \([a-z:]*\).*/\1/p' | tr -d '[:space:]')
+      - name: configure podman
+        if: inputs.task == 'test'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          mkdir -p ~/.config/containers
+          cat <<EOT >> ~/.config/containers/containers.conf
+          [engine]
+          cgroup_manager="cgroupfs"
+          EOT
+          podman info
 
-          # Whitelist of allowed tasks
-          allowed_tasks="docs|lint|test|unit|ui|e2e|als"
+      - name: Run lint task
+        if: inputs.task == 'lint'
+        run: task lint ${{ env.TASKFILE_ARGS }}
 
-          if [[ ! "$task" =~ ^($allowed_tasks)$ ]]; then
-            echo "❌ Invalid task: '$task'. Allowed tasks: docs, lint, test, unit, ui, e2e, als"
-            echo "task=" >> $GITHUB_OUTPUT
-            echo "valid=false" >> $GITHUB_OUTPUT
-            echo "error=Invalid task. Allowed tasks are: docs, lint, test, unit, ui, e2e, als" >> $GITHUB_OUTPUT
-            exit 1
-          fi
+      - name: Run docs task
+        if: inputs.task == 'docs'
+        run: task docs ${{ env.TASKFILE_ARGS }}
 
-          echo "✅ Valid task: $task"
-          echo "task=$task" >> $GITHUB_OUTPUT
-          echo "valid=true" >> $GITHUB_OUTPUT
+      - name: Run unit tests
+        if: inputs.task == 'unit'
+        run: task unit ${{ env.TASKFILE_ARGS }}
 
-      - name: Get PR information
-        if: steps.parse.outputs.valid == 'true'
-        id: pr_info
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      - name: Run ui tests
+        if: inputs.task == 'ui'
+        run: task ui ${{ env.TASKFILE_ARGS }}
+
+      - name: Run e2e tests
+        if: inputs.task == 'e2e'
+        run: task e2e ${{ env.TASKFILE_ARGS }}
+
+      - name: Run als tests
+        if: inputs.task == 'als'
+        run: task als ${{ env.TASKFILE_ARGS }}
+
+      # For test task, run all test types
+      - name: Run unit tests (full test suite)
+        if: inputs.task == 'test'
+        run: task unit ${{ env.TASKFILE_ARGS }}
+
+      - name: Run ui tests (full test suite)
+        if: inputs.task == 'test'
+        run: task ui ${{ env.TASKFILE_ARGS }}
+
+      - name: Run e2e tests (full test suite)
+        if: inputs.task == 'test'
+        run: task e2e ${{ env.TASKFILE_ARGS }}
+
+      - name: Run als tests (full test suite)
+        if: inputs.task == 'test'
+        run: task als ${{ env.TASKFILE_ARGS }}
+
+      - name: Upload vsix artifact
+        if: always()
+        uses: actions/upload-artifact@01e3fcfb95b4f4a52e10f30bc9c8966400a487b6 # v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const core = require('@actions/core');
-            const prNumber = context.issue.number;
-            
-            // Fetch PR details using the API
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber
-            });
+          name: ${{ inputs.task }}
+          path: "*.vsix"
+          if-no-files-found: ignore
 
-            console.log(`PR Number: ${prNumber}`);
-            console.log(`PR Repo: ${pr.head.repo.full_name}`);
-            console.log(`PR Ref: ${pr.head.ref}`);
-            console.log(`PR SHA: ${pr.head.sha}`);
+      - name: Generate coverage report
+        if: inputs.task == 'test' && !cancelled()
+        run: task ci:coverage:merge ${{ env.TASKFILE_ARGS }}
 
-            core.setOutput('pr_number', prNumber);
-            core.setOutput('pr_repo', pr.head.repo.full_name);
-            core.setOutput('pr_ref', pr.head.ref);
-            core.setOutput('pr_sha', pr.head.sha);
-
-      - name: Post comment acknowledging request
-        if: steps.parse.outputs.valid == 'true'
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      - name: Upload coverage reports to Codecov
+        if: inputs.task == 'test' && !cancelled()
+        uses: codecov/codecov-action@8f9c632e56c36c32b3e415d34198e3fb1f714771 # v5
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const task = '${{ steps.parse.outputs.task }}';
-            const actor = '${{ github.actor }}';
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `✅ @${actor} CI run for task **${task}** accepted. Starting workflow...`
-            });
-
-      - name: Trigger workflow via API
-        if: steps.parse.outputs.valid == 'true'
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            // Trigger the comment-ci-runner workflow
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'comment-ci-runner.yml',
-              ref: context.ref,
-              inputs: {
-                task: '${{ steps.parse.outputs.task }}',
-                pr_number: '${{ steps.pr_info.outputs.pr_number }}',
-                pr_repo: '${{ steps.pr_info.outputs.pr_repo }}',
-                pr_ref: '${{ steps.pr_info.outputs.pr_ref }}',
-                pr_sha: '${{ steps.pr_info.outputs.pr_sha }}'
-              }
-            });
-
-      - name: Post comment on error
-        if: steps.parse.outputs.valid != 'true'
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const error = '${{ steps.parse.outputs.error }}';
-            const actor = '${{ github.actor }}';
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `❌ @${actor} ${error}`
-            });
+          files: ./coverage/coverage-final.json
+          flags: ${{ inputs.task }}
+          fail_ci_if_error: false

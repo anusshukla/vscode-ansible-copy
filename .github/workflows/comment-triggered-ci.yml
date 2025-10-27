@@ -18,6 +18,7 @@ jobs:
       contents: read
       pull-requests: write
       checks: write
+      actions: write
     steps:
       - name: Parse comment
         id: parse
@@ -92,12 +93,18 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // Trigger the comment-ci-runner workflow
+            // Get the default branch for workflow dispatch
+            const { data: repo } = await github.rest.repos.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+            
+            // Trigger the comment-ci-runner workflow on the default branch
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'comment-ci-runner.yml',
-              ref: context.ref,
+              ref: repo.default_branch,
               inputs: {
                 task: '${{ steps.parse.outputs.task }}',
                 pr_number: '${{ steps.pr_info.outputs.pr_number }}',
