@@ -4,8 +4,6 @@ name: comment-ci-runner
 # This is a reusable workflow that executes specific CI tasks triggered by PR comments
 
 on:
-  repository_dispatch:
-    types: [comment-ci-runner]
   workflow_dispatch:
     inputs:
       task:
@@ -38,7 +36,7 @@ on:
         type: string
 
 concurrency:
-  group: comment-ci-${{ github.event.client_payload.pr_number || github.event.inputs.pr_number || github.sha }}-${{ github.event.client_payload.task || github.event.inputs.task }}
+  group: comment-ci-${{ github.event.inputs.pr_number || github.sha }}-${{ github.event.inputs.task }}
   cancel-in-progress: true
 
 env:
@@ -50,7 +48,7 @@ env:
 
 jobs:
   run-task:
-    name: ${{ github.event.client_payload.task || github.event.inputs.task }}
+    name: ${{ github.event.inputs.task }}
     environment: ci
     runs-on: ubuntu-24.04
     permissions:
@@ -58,17 +56,17 @@ jobs:
       id-token: write
       checks: write
       pull-requests: write
-
+    
     env:
       SKIP_DOCKER: 0
       SKIP_PODMAN: 0
       NODE_OPTIONS: --max-old-space-size=8192
       TASKFILE_ARGS: --output=group --output-group-begin='::group::{{.TASK}}' --output-group-end='::endgroup::'
-      TASK: ${{ github.event.client_payload.task || github.event.inputs.task }}
-      PR_NUMBER: ${{ github.event.client_payload.pr_number || github.event.inputs.pr_number }}
-      PR_REPO: ${{ github.event.client_payload.pr_repo || github.event.inputs.pr_repo }}
-      PR_REF: ${{ github.event.client_payload.pr_ref || github.event.inputs.pr_ref }}
-      PR_SHA: ${{ github.event.client_payload.pr_sha || github.event.inputs.pr_sha }}
+      TASK: ${{ github.event.inputs.task }}
+      PR_NUMBER: ${{ github.event.inputs.pr_number }}
+      PR_REPO: ${{ github.event.inputs.pr_repo }}
+      PR_REF: ${{ github.event.inputs.pr_ref }}
+      PR_SHA: ${{ github.event.inputs.pr_sha }}
 
     steps:
       - name: Post status comment
@@ -76,10 +74,10 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const prNumber = context.payload.client_payload?.pr_number || context.payload.inputs?.pr_number;
-            const task = context.payload.client_payload?.task || context.payload.inputs?.task;
-            const prSha = context.payload.client_payload?.pr_sha || context.payload.inputs?.pr_sha;
-
+            const prNumber = context.payload.inputs?.pr_number;
+            const task = context.payload.inputs?.task;
+            const prSha = context.payload.inputs?.pr_sha;
+            
             if (prNumber) {
               github.rest.issues.createComment({
                 issue_number: prNumber,
@@ -152,6 +150,24 @@ jobs:
         run: task setup
         id: setup
 
+      - name: Setup xvfb for UI tests
+        if: env.TASK == 'ui' || env.TASK == 'test'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          export DISPLAY=:99
+
+      - name: Configure podman for container tests
+        if: env.TASK == 'e2e' || env.TASK == 'test'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          mkdir -p ~/.config/containers
+          cat <<EOT >> ~/.config/containers/containers.conf
+          [engine]
+          cgroup_manager="cgroupfs"
+          EOT
+          podman info
+
       - name: Run task
         run: |
           case "${{ env.TASK }}" in
@@ -165,21 +181,9 @@ jobs:
               task unit ${{ env.TASKFILE_ARGS }}
               ;;
             ui)
-              # Install xvfb for headless UI tests
-              sudo apt-get update
-              sudo apt-get install -y xvfb
-              export DISPLAY=:99
               task ui ${{ env.TASKFILE_ARGS }}
               ;;
             e2e)
-              # Configure podman for e2e tests
-              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-              mkdir -p ~/.config/containers
-              cat <<EOT >> ~/.config/containers/containers.conf
-              [engine]
-              cgroup_manager="cgroupfs"
-              EOT
-              podman info
               task e2e ${{ env.TASKFILE_ARGS }}
               ;;
             als)
@@ -187,20 +191,6 @@ jobs:
               ;;
             test)
               # Full test suite
-              # Configure podman
-              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-              mkdir -p ~/.config/containers
-              cat <<EOT >> ~/.config/containers/containers.conf
-              [engine]
-              cgroup_manager="cgroupfs"
-              EOT
-              podman info
-
-              # Install xvfb for UI tests
-              sudo apt-get update
-              sudo apt-get install -y xvfb
-              export DISPLAY=:99
-
               task unit ${{ env.TASKFILE_ARGS }}
               task ui ${{ env.TASKFILE_ARGS }}
               task e2e ${{ env.TASKFILE_ARGS }}
@@ -218,9 +208,9 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const prNumber = context.payload.client_payload?.pr_number || context.payload.inputs?.pr_number;
-            const task = context.payload.client_payload?.task || context.payload.inputs?.task;
-
+            const prNumber = context.payload.inputs?.pr_number;
+            const task = context.payload.inputs?.task;
+            
             if (prNumber) {
               github.rest.issues.createComment({
                 issue_number: prNumber,
@@ -236,9 +226,9 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const prNumber = context.payload.client_payload?.pr_number || context.payload.inputs?.pr_number;
-            const task = context.payload.client_payload?.task || context.payload.inputs?.task;
-
+            const prNumber = context.payload.inputs?.pr_number;
+            const task = context.payload.inputs?.task;
+            
             if (prNumber) {
               github.rest.issues.createComment({
                 issue_number: prNumber,
