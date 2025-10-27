@@ -21,7 +21,7 @@ providing an integrated, feature-rich environment tailored for automation
 workflows. It offers features such as syntax highlighting, linting, intelligent
 code completion, and AI-assisted suggestions via Ansible Lightspeed.
 
-With support for multi-root workspaces, containerized execution environments,
+With support for multi-root workspaces, containerized execution environments, testing
 and extensive configuration options, the extension enhances productivity and
 ensures consistent code quality for both individual and team-based projects.
 This extension adds language support for Ansible in
